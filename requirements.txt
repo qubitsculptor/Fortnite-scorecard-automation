@@ -1,0 +1,11 @@
+google-generativeai
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+gspread
+pillow
+pandas
+openpyxl
+python-dotenv
+streamlit
