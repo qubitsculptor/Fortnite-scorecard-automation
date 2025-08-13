@@ -220,9 +220,19 @@ OTHER RULES:
         for result in results:
             match_info = result['match_info']
             for player in result['players']:
+                # Skip players with empty/blank usernames
+                if not player['username'] or not player['username'].strip():
+                    print(f"⚠️ Skipping player with empty username (team: {player.get('team', 'unknown')})")
+                    continue
+                
                 # Normalize username for matching
                 username_key = normalize_username(player['username'])
                 original_username = player['username']  # Keep original for display
+                
+                # Double-check after normalization
+                if not username_key or not username_key.strip():
+                    print(f"⚠️ Skipping player - username became empty after normalization: '{original_username}'")
+                    continue
                 
                 if username_key not in player_aggregates:
                     # First time seeing this player
@@ -360,8 +370,18 @@ OTHER RULES:
             for result in results:
                 match_info = result['match_info']
                 for player in result['players']:
+                    # Skip players with empty/blank usernames
+                    if not player['username'] or not player['username'].strip():
+                        print(f"⚠️ Skipping player with empty username (team: {player.get('team', 'unknown')})")
+                        continue
+                    
                     username_key = normalize_username(player['username'])
                     original_username = player['username']
+                    
+                    # Double-check after normalization
+                    if not username_key or not username_key.strip():
+                        print(f"⚠️ Skipping player - username became empty after normalization: '{original_username}'")
+                        continue
                     
                     if username_key not in new_player_data:
                         new_player_data[username_key] = {

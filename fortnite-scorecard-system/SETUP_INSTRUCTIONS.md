@@ -105,7 +105,7 @@ The app will open in your web browser at `http://localhost:8501`
 6. Create a Google Sheet and share it with the service account email
 7. Copy the Sheet ID from the URL and add to `.env` file
 
-##  How to Use
+## 📱 How to Use
 
 ### Basic Usage
 1. Run the app: `streamlit run app_new.py`
@@ -157,7 +157,7 @@ If you encounter issues:
 3. Try restarting the application
 4. Ensure your Python version is 3.8+
 
-##  Tips for Best Results
+## 💡 Tips for Best Results
 
 ### Image Quality
 - Use clear, high-resolution screenshots
@@ -174,7 +174,7 @@ If you encounter issues:
 - Process images in batches to minimize API calls
 - The tool is optimized to keep costs low
 
-## 🔧 Advanced Configuration
+##  Advanced Configuration
 
 ### Custom Google Sheets
 To use your own Google Sheet:
@@ -213,4 +213,4 @@ The application includes:
 
 ---
 
-**Run `streamlit run app_new.py` and upload your first screenshots!** 
+**Ready to start processing your Fortnite scorecards? Run `streamlit run app_new.py` and upload your first screenshots!** 

@@ -183,6 +183,7 @@ def main():
                 # Show immediate aggregation info
                 total_raw_players = sum(len(r['players']) for r in results)
                 st.info(f"Found {total_raw_players} player entries (before duplicate removal)")
+                st.info("ℹ️ Players with empty usernames are automatically filtered out for data quality")
                 
             else:
                 st.error("Failed to extract data from images. Please check image quality and try again.")
