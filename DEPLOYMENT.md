@@ -1,69 +1,148 @@
-# Deployment Guide
+# 🔒 Admin Panel Deployment Guide
 
-## Option 1: Streamlit Cloud (Recommended - Free)
+Perfect for your setup! Deploy a **secure admin panel** on a separate website that only you can access.
 
-1. **Push to GitHub**
+## 🎯 Your Setup Overview
+
+1. **Public Website**: Your existing leaderboard (displays data from Google Sheet)
+2. **Admin Panel**: Secure scorecard processor (this tool) - separate subdomain  
+3. **Data Flow**: Screenshots → AI Processing → Google Sheet → Your public leaderboard updates automatically
+
+## 🚀 Recommended: Streamlit Cloud (Free/Paid)
+
+### Step 1: Prepare for Deployment
+1. **Create Private GitHub Repository**
    ```bash
    git init
    git add .
-   git commit -m "Initial commit"
-   git remote add origin https://github.com/yourusername/fortnite-scorecard.git
+   git commit -m "Fortnite Admin Panel - Ready for deployment"
+   git remote add origin https://github.com/yourusername/fortnite-admin.git
    git push -u origin main
    ```
 
-2. **Deploy to Streamlit Cloud**
-   - Go to [share.streamlit.io](https://share.streamlit.io)
-   - Connect your GitHub repo
-   - Set main file: `app.py`
-   - Add secrets in Streamlit dashboard:
-     ```
-     GEMINI_API_KEY = "your_api_key_here"
-     GOOGLE_SHEET_ID = "your_sheet_id_here"
-     ```
-   - Upload `credentials.json` as a secret file
-
-## Option 2: Railway (Paid - $5/month)
-
-1. **Create railway.json**
-   ```json
-   {
-     "build": {
-       "builder": "NIXPACKS"
-     },
-     "deploy": {
-       "startCommand": "streamlit run app.py --server.port $PORT --server.address 0.0.0.0"
-     }
-   }
+2. **Ensure .gitignore includes**
+   ```
+   .env
+   credentials.json
+   *.csv
+   __pycache__/
    ```
 
-2. **Deploy**
-   - Push to GitHub
-   - Connect to Railway
-   - Add environment variables
+### Step 2: Deploy to Streamlit Cloud
+1. Go to [share.streamlit.io](https://share.streamlit.io)
+2. Connect your GitHub account
+3. Select your repository
+4. **Important**: Set main file as `app_secure.py` (password protected)
+5. Configure secrets in Streamlit dashboard:
+   ```toml
+   GEMINI_API_KEY = "your_api_key_here"
+   GOOGLE_SHEET_ID = "your_existing_sheet_id_here"
+   ADMIN_PASSWORD = "your_secure_password_here"
+   ```
+6. Upload `credentials.json` content as secret
 
-## Option 3: Local Network (Free)
+### Step 3: Custom Subdomain Setup
+1. Point `admin.yourwebsite.com` to your Streamlit app
+2. In Streamlit Cloud settings, add custom domain
+3. SSL certificate automatically provided
 
-Run locally and access from other devices on your network:
+## 🔗 Your Workflow
 
+### For You (Admin):
+1. Visit `admin.yourwebsite.com`
+2. Enter your password
+3. Upload scorecard screenshots
+4. Click "Process & Update Leaderboard"
+5. Your public website updates automatically!
+
+## 🌐 Alternative: Netlify (Your Platform)
+
+Since you mentioned using Netlify, here's how to deploy there:
+
+### Option 1: Static Site + External Streamlit
+1. **Deploy Streamlit Admin Panel** on Railway/Streamlit Cloud
+2. **Keep your current Netlify setup** for the public leaderboard
+3. **Perfect separation**: Admin tool separate from public site
+
+### Option 2: Netlify Functions (Advanced)
+Deploy the admin panel as Netlify functions:
 ```bash
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
+# Create netlify.toml
+[build]
+  command = "pip install -r requirements.txt"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/admin/*"
+  to = "/.netlify/functions/admin"
+  status = 200
 ```
 
-Then access via: `http://your-local-ip:8501`
+## 💰 Cost Breakdown (Perfect for Business)
 
-## Mobile Optimization
+### Streamlit Cloud
+- **Free**: Public apps (not suitable for admin)
+- **$20/month**: Private apps with password protection ✅
 
-The app is already optimized for mobile with:
-- Responsive design
-- Touch-friendly file uploads
-- Mobile-friendly interface
-- Works great on iPad
+### API Costs (Pay per use)
+- **Google Gemini**: ~$0.01-0.05 per screenshot
+- **Example**: 500 screenshots/month = $5-25
 
-## Cost Breakdown
+### Total: $25-45/month for complete system
 
-- **Gemini API**: ~$0.01 per 100 images
-- **Google Sheets**: Free
-- **Streamlit Cloud**: Free
-- **Railway**: $5/month (optional)
+## 🔐 Security Features
 
-Total cost: **Nearly free!** 🎉
+### Built-in Password Protection
+- Simple login screen
+- Only you have access
+- No complex user management needed
+
+### Environment Variables
+Store securely in platform secrets:
+- `ADMIN_PASSWORD` - Your login password
+- `GEMINI_API_KEY` - AI processing
+- `GOOGLE_SHEET_ID` - Your existing spreadsheet
+
+### Data Flow Security
+- Screenshots processed via AI
+- Results sent directly to your existing Google Sheet
+- No data stored on admin server
+- Public website remains unchanged
+
+## ⚡ Quick Setup (15 Minutes)
+
+1. **Create private GitHub repo** with this code
+2. **Deploy to Streamlit Cloud** (free signup)
+3. **Set environment variables** in dashboard
+4. **Point admin.yourwebsite.com** to the app
+5. **Test the workflow** with sample screenshots
+
+## 🎯 Perfect Solution For You
+
+✅ **Separate admin site** - No changes to your current website
+✅ **Password protected** - Only you can access
+✅ **Auto-updates your leaderboard** - Via your existing Google Sheet
+✅ **Mobile friendly** - Upload screenshots from phone/iPad
+✅ **Cost effective** - ~$25-45/month total
+✅ **Zero maintenance** - Cloud hosted, auto-scaling
+
+## 📱 Mobile Optimized Workflow
+
+1. Take screenshot on iPad during match
+2. Open admin panel on any device
+3. Upload screenshot (drag & drop)
+4. AI processes and updates leaderboard
+5. Your public website shows new stats immediately
+
+## 🚦 Ready to Deploy?
+
+Choose your deployment method:
+- **Streamlit Cloud**: Easiest, $20/month
+- **Railway**: Developer-friendly, $5/month  
+- **Netlify**: Use your current platform
+
+All options give you the same result: **Secure admin panel that updates your public leaderboard automatically!**
+
+---
+
+**Next Step**: Create the secure admin panel (`app_secure.py`) and deploy! 🚀

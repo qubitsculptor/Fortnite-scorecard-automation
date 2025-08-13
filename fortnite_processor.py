@@ -36,8 +36,7 @@ class FortniteScoreboardProcessor:
         self.enable_duplicate_check = os.getenv('ENABLE_DUPLICATE_CHECK', 'true').lower() == 'true'
         self.processed_hashes = set()
         
-        # TODO: Disable duplicate detection for testing - re-enable later
-        self.enable_duplicate_check = False
+        # Duplicate detection is now enabled for production use
     
     def _setup_google_sheets(self) -> Optional[gspread.Client]:
         """Setup Google Sheets client if credentials are available."""
@@ -269,22 +268,21 @@ OTHER RULES:
             games = stats['games_played']
             row = {
                 'username': stats['username'],
-                'team': stats['team'],
                 'games_played': games,
                 'total_eliminations': stats['total_eliminations'],
-                'total_deaths': stats['total_deaths'],
                 'total_assists': stats['total_assists'],
-                'total_damage': stats['total_damage'],
+                'total_deaths': stats['total_deaths'],
                 'total_plants': stats['total_plants'],
                 'total_defuses': stats['total_defuses'],
                 'avg_eliminations': round(stats['total_eliminations'] / games, 2),
-                'avg_deaths': round(stats['total_deaths'] / games, 2),
                 'avg_assists': round(stats['total_assists'] / games, 2),
-                'avg_damage': round(stats['total_damage'] / games, 2),
+                'avg_deaths': round(stats['total_deaths'] / games, 2),
+                'avg_plants': round(stats['total_plants'] / games, 2),
+                'avg_defuses': round(stats['total_defuses'] / games, 2),
                 'kd_ratio': round(stats['total_eliminations'] / max(stats['total_deaths'], 1), 2),
-                'victories': stats['victories'],
-                'defeats': stats['defeats'],
-                'win_rate': round((stats['victories'] / games) * 100, 1),
+                'team': stats['team'],
+                'total_damage': stats['total_damage'],
+                'avg_damage': round(stats['total_damage'] / games, 2),
                 'first_seen': stats['first_seen'],
                 'last_seen': stats['last_seen']
             }
@@ -301,7 +299,7 @@ OTHER RULES:
         return output_file
     
     def export_to_google_sheets(self, results: List[Dict]) -> bool:
-        """Export aggregated results to Google Sheets with improved duplicate detection."""
+        """Export aggregated results to Google Sheets with COMBINE mode - merges with existing data."""
         if not self.sheets_client or not self.sheet_id:
             print("❌ Google Sheets not configured")
             return False
@@ -330,8 +328,34 @@ OTHER RULES:
                     
                 return normalized.strip()
             
-            # Use improved aggregation logic
-            player_aggregates = {}
+            # STEP 1: Read existing data from Google Sheet
+            print("🔍 Reading existing leaderboard data...")
+            existing_data = {}
+            try:
+                all_records = worksheet.get_all_records()
+                for record in all_records:
+                    if record.get('username'):  # Skip empty rows
+                        username_key = normalize_username(record['username'])
+                        existing_data[username_key] = {
+                            'username': record.get('username', ''),
+                            'games_played': int(record.get('games_played', 0)),
+                            'total_eliminations': int(record.get('total_eliminations', 0)),
+                            'total_deaths': int(record.get('total_deaths', 0)),
+                            'total_assists': int(record.get('total_assists', 0)),
+                            'total_damage': int(record.get('total_damage', 0)),
+                            'total_plants': int(record.get('total_plants', 0)),
+                            'total_defuses': int(record.get('total_defuses', 0)),
+                            'team': record.get('team', ''),
+                            'last_seen': record.get('last_updated', record.get('last_seen', ''))
+                        }
+                print(f"📊 Found {len(existing_data)} existing players in leaderboard")
+            except Exception as e:
+                print(f"⚠️ No existing data found or error reading sheet: {e}")
+                existing_data = {}
+            
+            # STEP 2: Process new data from screenshots
+            print("🔄 Processing new screenshot data...")
+            new_player_data = {}
             
             for result in results:
                 match_info = result['match_info']
@@ -339,8 +363,8 @@ OTHER RULES:
                     username_key = normalize_username(player['username'])
                     original_username = player['username']
                     
-                    if username_key not in player_aggregates:
-                        player_aggregates[username_key] = {
+                    if username_key not in new_player_data:
+                        new_player_data[username_key] = {
                             'username': original_username,
                             'team': player['team'],
                             'games_played': 0,
@@ -350,12 +374,10 @@ OTHER RULES:
                             'total_damage': 0,
                             'total_plants': 0,
                             'total_defuses': 0,
-                            'victories': 0,
-                            'defeats': 0,
                             'last_seen': match_info['timestamp']
                         }
                     
-                    stats = player_aggregates[username_key]
+                    stats = new_player_data[username_key]
                     stats['games_played'] += 1
                     stats['total_eliminations'] += player['eliminations']
                     stats['total_deaths'] += player['deaths']
@@ -363,67 +385,108 @@ OTHER RULES:
                     stats['total_damage'] += player['damage']
                     stats['total_plants'] += player['plants']
                     stats['total_defuses'] += player['defuses']
-                    
-                    if match_info.get('match_result') == 'VICTORY':
-                        stats['victories'] += 1
-                    else:
-                        stats['defeats'] += 1
-                    
                     stats['last_seen'] = match_info['timestamp']
                     stats['team'] = player['team']
             
-            # Prepare aggregated data rows
-            rows_to_add = []
-            for username_key, stats in player_aggregates.items():
-                games = stats['games_played']
-                row = [
-                    stats['last_seen'],
-                    stats['username'],
-                    stats['team'],
-                    games,
-                    stats['total_eliminations'],
-                    stats['total_deaths'],
-                    stats['total_assists'],
-                    stats['total_damage'],
-                    stats['total_plants'],
-                    stats['total_defuses'],
-                    round(stats['total_eliminations'] / games, 2),  # avg_eliminations
-                    round(stats['total_eliminations'] / max(stats['total_deaths'], 1), 2),  # kd_ratio
-                    stats['victories'],
-                    round((stats['victories'] / games) * 100, 1)  # win_rate
-                ]
-                rows_to_add.append(row)
+            print(f"🆕 Found {len(new_player_data)} unique players in new screenshots")
             
-            # Check if headers exist
+            # STEP 3: COMBINE existing and new data
+            print("🔄 Combining existing leaderboard with new data...")
+            combined_data = existing_data.copy()  # Start with existing data
+            
+            for username_key, new_stats in new_player_data.items():
+                if username_key in combined_data:
+                    # COMBINE: Add new stats to existing player
+                    existing_stats = combined_data[username_key]
+                    existing_stats['games_played'] += new_stats['games_played']
+                    existing_stats['total_eliminations'] += new_stats['total_eliminations']
+                    existing_stats['total_deaths'] += new_stats['total_deaths']
+                    existing_stats['total_assists'] += new_stats['total_assists']
+                    existing_stats['total_damage'] += new_stats['total_damage']
+                    existing_stats['total_plants'] += new_stats['total_plants']
+                    existing_stats['total_defuses'] += new_stats['total_defuses']
+                    existing_stats['team'] = new_stats['team']  # Use most recent team
+                    existing_stats['last_seen'] = new_stats['last_seen']  # Update timestamp
+                    print(f"✅ COMBINED: {new_stats['username']} - added {new_stats['games_played']} more games")
+                else:
+                    # NEW: Add completely new player
+                    combined_data[username_key] = new_stats
+                    print(f"🆕 NEW: {new_stats['username']} - first time on leaderboard")
+            
+            print(f"📊 Final leaderboard: {len(combined_data)} total players")
+            
+            # STEP 4: Prepare rows for Google Sheet
+            rows_to_add = []
+            for username_key, stats in combined_data.items():
+                games = stats['games_played']
+                if games > 0:  # Skip players with 0 games
+                    row = [
+                        stats['last_seen'],
+                        stats['username'],
+                        games,
+                        stats['total_eliminations'],
+                        stats['total_assists'],
+                        stats['total_deaths'],
+                        stats['total_plants'],
+                        stats['total_defuses'],
+                        round(stats['total_eliminations'] / games, 2),  # avg_eliminations
+                        round(stats['total_assists'] / games, 2),  # avg_assists
+                        round(stats['total_deaths'] / games, 2),  # avg_deaths
+                        round(stats['total_plants'] / games, 2),  # avg_plants
+                        round(stats['total_defuses'] / games, 2),  # avg_defuses
+                        round(stats['total_eliminations'] / max(stats['total_deaths'], 1), 2),  # kd_ratio
+                        stats['team'],
+                        stats['total_damage'],
+                        round(stats['total_damage'] / games, 2)  # avg_damage
+                    ]
+                    rows_to_add.append(row)
+            
+            # STEP 5: Update Google Sheet with combined data
+            print("📝 Updating Google Sheet with combined leaderboard...")
+            
+            # Check if headers exist, create if needed
             try:
                 headers = worksheet.row_values(1)
-                if not headers:
+                if not headers or len(headers) < 10:
                     headers = [
-                        'last_updated', 'username', 'team', 'games_played',
-                        'total_eliminations', 'total_deaths', 'total_assists', 
-                        'total_damage', 'total_plants', 'total_defuses',
-                        'avg_eliminations', 'kd_ratio', 'victories', 'win_rate'
+                        'last_updated', 'username', 'games_played',
+                        'total_eliminations', 'total_assists', 'total_deaths', 
+                        'total_plants', 'total_defuses',
+                        'avg_eliminations', 'avg_assists', 'avg_deaths', 'avg_plants', 'avg_defuses',
+                        'kd_ratio', 'team', 'total_damage', 'avg_damage'
                     ]
+                    worksheet.clear()  # Clear everything if headers are wrong
                     worksheet.append_row(headers)
-            except:
+                    print("📋 Created new headers")
+            except Exception as e:
+                print(f"⚠️ Creating new headers due to error: {e}")
                 headers = [
-                    'last_updated', 'username', 'team', 'games_played',
-                    'total_eliminations', 'total_deaths', 'total_assists', 
-                    'total_damage', 'total_plants', 'total_defuses',
-                    'avg_eliminations', 'kd_ratio', 'victories', 'win_rate'
+                    'last_updated', 'username', 'games_played',
+                    'total_eliminations', 'total_assists', 'total_deaths', 
+                    'total_plants', 'total_defuses',
+                    'avg_eliminations', 'avg_assists', 'avg_deaths', 'avg_plants', 'avg_defuses',
+                    'kd_ratio', 'team', 'total_damage', 'avg_damage'
                 ]
+                worksheet.clear()
                 worksheet.append_row(headers)
             
-            # Clear existing data (except headers) and add new aggregated data
+            # Clear existing data rows (keep headers)
             if len(worksheet.get_all_values()) > 1:
                 worksheet.delete_rows(2, len(worksheet.get_all_values()))
             
-            # Add aggregated rows sorted by K/D ratio
-            rows_to_add.sort(key=lambda x: x[11], reverse=True)  # Sort by kd_ratio
-            for row in rows_to_add:
-                worksheet.append_row(row)
+            # Sort by K/D ratio and add combined data
+            rows_to_add.sort(key=lambda x: x[13], reverse=True)  # Sort by kd_ratio (index 13)
             
-            print(f"✅ Successfully exported {len(rows_to_add)} unique players to Google Sheets")
+            # Add rows in batches for better performance
+            batch_size = 100
+            for i in range(0, len(rows_to_add), batch_size):
+                batch = rows_to_add[i:i+batch_size]
+                for row in batch:
+                    worksheet.append_row(row)
+                print(f"📊 Added batch {i//batch_size + 1}/{(len(rows_to_add)-1)//batch_size + 1}")
+            
+            print(f"✅ Successfully updated leaderboard with {len(rows_to_add)} players")
+            print(f"📈 COMBINE mode: Existing players updated, new players added!")
             return True
             
         except Exception as e:

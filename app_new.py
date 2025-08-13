@@ -94,8 +94,10 @@ def main():
         
         # Settings
         st.subheader("Settings")
-        st.info(" Advanced duplicate detection enabled")
-        st.info(" Aggressive username normalization active")
+        st.info("🔄 COMBINE mode: New data adds to existing leaderboard")
+        st.info("🤖 Advanced duplicate detection enabled")
+        st.info("✨ Aggressive username normalization active")
+        st.info("🔒 Duplicate image detection: Ignores same screenshots")
         
         # Instructions
         st.subheader("Quick Setup")
@@ -113,213 +115,153 @@ def main():
             4. Share sheet with service account email
             """)
     
-    # Main content
-    col1, col2 = st.columns([2, 1])
+    # Main content - single column without statistics
     
-    with col1:
-        # File upload section
-        st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-        st.subheader(" Upload Scorecard Screenshots")
+    # File upload section
+    st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+    st.subheader("Upload Scorecard Screenshots")
+    
+    uploaded_files = st.file_uploader(
+        "Drag and drop your Fortnite scorecard screenshots here",
+        type=['png', 'jpg', 'jpeg'],
+        accept_multiple_files=True,
+        help="Upload one or more screenshots of Fortnite Ballistic scorecards"
+    )
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Process button
+    if uploaded_files:
+        st.info(f"{len(uploaded_files)} images uploaded")
+        st.info("🔒 Duplicate image detection active - same screenshots will be automatically skipped")
         
-        uploaded_files = st.file_uploader(
-            "Drag and drop your Fortnite scorecard screenshots here",
-            type=['png', 'jpg', 'jpeg'],
-            accept_multiple_files=True,
-            help="Upload one or more screenshots of Fortnite Ballistic scorecards"
-        )
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Process button
-        if uploaded_files:
-            st.info(f"📁 {len(uploaded_files)} images uploaded")
+        if st.button("Process Images", type="primary", use_container_width=True):
+            if not processor.model:
+                st.error("Gemini API not configured. Please add your API key to .env file.")
+                return
             
-            if st.button("Process Images", type="primary", use_container_width=True):
-                if not processor.model:
-                    st.error("❌ Gemini API not configured. Please add your API key to .env file.")
-                    return
-                
-                # Save uploaded files temporarily
-                temp_files = []
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                with st.spinner("📝 Preparing files..."):
-                    for i, uploaded_file in enumerate(uploaded_files):
-                        progress_bar.progress((i + 1) / len(uploaded_files))
-                        status_text.text(f"Saving {uploaded_file.name}...")
-                        
-                        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}")
-                        temp_file.write(uploaded_file.getvalue())
-                        temp_file.close()
-                        temp_files.append(temp_file.name)
-                
-                # Process images
-                status_text.text("🤖 Processing with Gemini AI...")
-                progress_bar.progress(0)
-                
-                results = []
-                for i, temp_file in enumerate(temp_files):
-                    progress_bar.progress((i + 1) / len(temp_files))
-                    status_text.text(f"🔍 Processing image {i+1} of {len(temp_files)}...")
+            # Save uploaded files temporarily
+            temp_files = []
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            with st.spinner("Preparing files..."):
+                for i, uploaded_file in enumerate(uploaded_files):
+                    progress_bar.progress((i + 1) / len(uploaded_files))
+                    status_text.text(f"Saving {uploaded_file.name}...")
                     
-                    result = processor.process_image(temp_file)
-                    if result:
-                        results.append(result)
+                    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_file.name.split('.')[-1]}")
+                    temp_file.write(uploaded_file.getvalue())
+                    temp_file.close()
+                    temp_files.append(temp_file.name)
+            
+            # Process images
+            status_text.text("Processing with Gemini AI...")
+            progress_bar.progress(0)
+            
+            results = []
+            for i, temp_file in enumerate(temp_files):
+                progress_bar.progress((i + 1) / len(temp_files))
+                status_text.text(f"Processing image {i+1} of {len(temp_files)}...")
                 
-                # Clean up temp files
-                for temp_file in temp_files:
-                    os.unlink(temp_file)
+                result = processor.process_image(temp_file)
+                if result:
+                    results.append(result)
+            
+            # Clean up temp files
+            for temp_file in temp_files:
+                os.unlink(temp_file)
+            
+            progress_bar.progress(1.0)
+            status_text.text("Processing complete!")
+            
+            if results:
+                st.session_state.results = results
+                st.session_state.processed = True
+                st.success(f"Successfully processed {len(results)} images!")
                 
-                progress_bar.progress(1.0)
-                status_text.text("✅ Processing complete!")
+                # Show immediate aggregation info
+                total_raw_players = sum(len(r['players']) for r in results)
+                st.info(f"Found {total_raw_players} player entries (before duplicate removal)")
                 
-                if results:
-                    st.session_state.results = results
-                    st.session_state.processed = True
-                    st.success(f"🎉 Successfully processed {len(results)} images!")
-                    
-                    # Show immediate aggregation info
-                    total_raw_players = sum(len(r['players']) for r in results)
-                    st.info(f"📊 Found {total_raw_players} player entries (before duplicate removal)")
-                    
-                else:
-                    st.error("❌ Failed to extract data from images. Please check image quality and try again.")
+            else:
+                st.error("Failed to extract data from images. Please check image quality and try again.")
+    
+    # Display results
+    if hasattr(st.session_state, 'processed') and st.session_state.processed:
+        st.subheader("Aggregated Player Data")
         
-        # Display results
-        if hasattr(st.session_state, 'processed') and st.session_state.processed:
-            st.subheader("📋 Aggregated Player Data")
+        # Get aggregated data using the processor's export function
+        try:
+            # Create temporary CSV to get aggregated data
+            temp_csv = processor.export_to_csv(st.session_state.results, 'temp_aggregated.csv')
+            aggregated_df = pd.read_csv(temp_csv)
+            os.unlink(temp_csv)  # Clean up
             
-            # Get aggregated data using the processor's export function
-            try:
-                # Create temporary CSV to get aggregated data
-                temp_csv = processor.export_to_csv(st.session_state.results, 'temp_aggregated.csv')
-                aggregated_df = pd.read_csv(temp_csv)
-                os.unlink(temp_csv)  # Clean up
-                
-                st.success(f" **{len(aggregated_df)} unique players** after duplicate removal")
-                
-                # Display aggregated data
-                st.dataframe(aggregated_df, use_container_width=True, hide_index=True)
-                
-            except Exception as e:
-                st.error(f"Error creating aggregated view: {e}")
-                
-                # Fallback: show raw data
-                st.warning("Showing raw data instead:")
-                display_data = []
-                for result in st.session_state.results:
-                    match_info = result['match_info']
-                    for player in result['players']:
-                        display_data.append({
-                            'Image': match_info.get('image_file', 'N/A'),
-                            'Player': player['username'],
-                            'Team': player['team'],
-                            'Kills': player['eliminations'],
-                            'Deaths': player['deaths'],
-                            'Assists': player['assists'],
-                            'Damage': player['damage'],
-                            'Plants': player['plants'],
-                            'Defuses': player['defuses']
-                        })
-                
-                df = pd.DataFrame(display_data)
-                st.dataframe(df, use_container_width=True, hide_index=True)
+            st.success(f"**{len(aggregated_df)} unique players** after duplicate removal")
             
-            # Export options
-            st.subheader(" Export Data")
-            col_export1, col_export2 = st.columns(2)
+            st.dataframe(aggregated_df, use_container_width=True, hide_index=True)
             
-            with col_export1:
-                # CSV Export
-                if st.button(" Download CSV", use_container_width=True):
-                    csv_file = processor.export_to_csv(st.session_state.results)
-                    with open(csv_file, 'rb') as f:
-                        st.download_button(
-                            "Download Aggregated CSV",
-                            f.read(),
-                            file_name=csv_file,
-                            mime='text/csv',
-                            use_container_width=True
-                        )
+        except Exception as e:
+            st.error(f"Error creating aggregated view: {e}")
             
-            with col_export2:
-                # Google Sheets Export
-                if st.button("📊 Export to Google Sheets", use_container_width=True):
-                    if processor.sheets_client:
-                        with st.spinner("Uploading to Google Sheets..."):
-                            success = processor.export_to_google_sheets(st.session_state.results)
-                        if success:
-                            st.success("✅ Data exported to Google Sheets!")
-                        else:
-                            st.error("❌ Failed to export to Google Sheets")
+            # Fallback: show raw data
+            st.warning("Showing raw data instead:")
+            display_data = []
+            for result in st.session_state.results:
+                match_info = result['match_info']
+                for player in result['players']:
+                    display_data.append({
+                        'Image': match_info.get('image_file', 'N/A'),
+                        'Player': player['username'],
+                        'Team': player['team'],
+                        'Kills': player['eliminations'],
+                        'Deaths': player['deaths'],
+                        'Assists': player['assists'],
+                        'Damage': player['damage'],
+                        'Plants': player['plants'],
+                        'Defuses': player['defuses']
+                    })
+            
+            df = pd.DataFrame(display_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+        
+        # Export options
+        st.subheader("Export Data")
+        col_export1, col_export2 = st.columns(2)
+        
+        with col_export1:
+            # CSV Export
+            if st.button("Download CSV", use_container_width=True):
+                csv_file = processor.export_to_csv(st.session_state.results)
+                with open(csv_file, 'rb') as f:
+                    st.download_button(
+                        "Download Aggregated CSV",
+                        f.read(),
+                        file_name=csv_file,
+                        mime='text/csv',
+                        use_container_width=True
+                    )
+        
+        with col_export2:
+            # Google Sheets Export
+            if st.button("Export to Google Sheets", use_container_width=True):
+                if processor.sheets_client:
+                    with st.spinner("Uploading to Google Sheets..."):
+                        success = processor.export_to_google_sheets(st.session_state.results)
+                    if success:
+                        st.success("🔄 Leaderboard updated with COMBINE mode!")
+                        st.info("✅ New players added, existing players' stats combined!")
                     else:
-                        st.error("❌ Google Sheets not configured")
-    
-    with col2:
-        # Statistics panel
-        st.subheader("📈 Statistics")
-        
-        if hasattr(st.session_state, 'processed') and st.session_state.processed:
-            # Use aggregated data for statistics
-            try:
-                temp_csv = processor.export_to_csv(st.session_state.results, 'temp_stats.csv')
-                stats_df = pd.read_csv(temp_csv)
-                os.unlink(temp_csv)
-                
-                if len(stats_df) > 0:
-                    st.write("**🏆 Top Players (by K/D):**")
-                    
-                    # Sort by K/D ratio and show top 5
-                    top_players = stats_df.nlargest(5, 'kd_ratio')
-                    
-                    for i, (idx, player) in enumerate(top_players.iterrows()):
-                        with st.container():
-                            st.write(f"**#{i+1} {player['username']}**")
-                            col_kd, col_games = st.columns(2)
-                            with col_kd:
-                                st.metric("K/D Ratio", f"{player['kd_ratio']:.2f}")
-                            with col_games:
-                                st.metric("Games", int(player['games_played']))
-                            st.write(f"Kills: {int(player['total_eliminations'])} | Damage: {int(player['total_damage']):,}")
-                            if i < 4:  # Don't add divider after last item
-                                st.divider()
-                
-            except Exception as e:
-                st.error(f"Error generating statistics: {e}")
-            
-            # Match results summary
-            total_matches = len(st.session_state.results)
-            victories = sum(1 for r in st.session_state.results if r['match_info'].get('match_result') == 'VICTORY')
-            
-            st.write("**📊 Match Summary:**")
-            col_matches, col_wins = st.columns(2)
-            with col_matches:
-                st.metric("Total Matches", total_matches)
-            with col_wins:
-                st.metric("Victories", victories)
-            win_rate = (victories/total_matches*100) if total_matches > 0 else 0
-            st.metric("Win Rate", f"{win_rate:.1f}%")
-            
-        else:
-            st.info(" Upload and process images to see statistics")
-        
-        # Recent activity
-        st.subheader(" Recent Activity")
-        if hasattr(st.session_state, 'processed'):
-            st.text("✅ Images processed")
-            st.text("✅ Data extracted")
-            st.text("✅ Duplicates merged")
-            if processor.sheets_client:
-                st.text("✅ Ready for export")
-        else:
-            st.text("⏳ Waiting for images...")
+                        st.error("Failed to export to Google Sheets")
+                else:
+                    st.error("Google Sheets not configured")
 
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; font-size: 0.8rem;">
-         Built with Streamlit + Gemini AI | Advanced duplicate detection active
+        Built with Streamlit + Gemini AI | COMBINE mode: Preserves & adds to existing data
     </div>
     """, unsafe_allow_html=True)
 
