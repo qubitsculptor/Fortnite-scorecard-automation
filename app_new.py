@@ -94,8 +94,8 @@ def main():
         
         # Settings
         st.subheader("Settings")
-        st.info("🧠 Advanced duplicate detection enabled")
-        st.info("🔧 Aggressive username normalization active")
+        st.info(" Advanced duplicate detection enabled")
+        st.info(" Aggressive username normalization active")
         
         # Instructions
         st.subheader("Quick Setup")
@@ -119,7 +119,7 @@ def main():
     with col1:
         # File upload section
         st.markdown('<div class="upload-section">', unsafe_allow_html=True)
-        st.subheader("📤 Upload Scorecard Screenshots")
+        st.subheader(" Upload Scorecard Screenshots")
         
         uploaded_files = st.file_uploader(
             "Drag and drop your Fortnite scorecard screenshots here",
@@ -134,7 +134,7 @@ def main():
         if uploaded_files:
             st.info(f"📁 {len(uploaded_files)} images uploaded")
             
-            if st.button("🚀 Process Images", type="primary", use_container_width=True):
+            if st.button("Process Images", type="primary", use_container_width=True):
                 if not processor.model:
                     st.error("❌ Gemini API not configured. Please add your API key to .env file.")
                     return
@@ -197,7 +197,7 @@ def main():
                 aggregated_df = pd.read_csv(temp_csv)
                 os.unlink(temp_csv)  # Clean up
                 
-                st.success(f"🎯 **{len(aggregated_df)} unique players** after duplicate removal")
+                st.success(f" **{len(aggregated_df)} unique players** after duplicate removal")
                 
                 # Display aggregated data
                 st.dataframe(aggregated_df, use_container_width=True, hide_index=True)
@@ -227,12 +227,12 @@ def main():
                 st.dataframe(df, use_container_width=True, hide_index=True)
             
             # Export options
-            st.subheader("💾 Export Data")
+            st.subheader(" Export Data")
             col_export1, col_export2 = st.columns(2)
             
             with col_export1:
                 # CSV Export
-                if st.button("📥 Download CSV", use_container_width=True):
+                if st.button(" Download CSV", use_container_width=True):
                     csv_file = processor.export_to_csv(st.session_state.results)
                     with open(csv_file, 'rb') as f:
                         st.download_button(
@@ -302,10 +302,10 @@ def main():
             st.metric("Win Rate", f"{win_rate:.1f}%")
             
         else:
-            st.info("📤 Upload and process images to see statistics")
+            st.info(" Upload and process images to see statistics")
         
         # Recent activity
-        st.subheader("🕐 Recent Activity")
+        st.subheader(" Recent Activity")
         if hasattr(st.session_state, 'processed'):
             st.text("✅ Images processed")
             st.text("✅ Data extracted")
@@ -319,7 +319,7 @@ def main():
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; font-size: 0.8rem;">
-        🚀 Built with Streamlit + Gemini AI | Advanced duplicate detection active
+         Built with Streamlit + Gemini AI | Advanced duplicate detection active
     </div>
     """, unsafe_allow_html=True)
 
