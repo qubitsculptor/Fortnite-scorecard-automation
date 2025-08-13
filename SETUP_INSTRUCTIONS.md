@@ -1,4 +1,16 @@
-# Fortnite B## 📦 What's Included
+# Fortnite Ballistic Scorecard Processor - Setup Instructions
+
+## 📋 Overview
+This tool automatically extracts player statistics from Fortnite Ballistic scorecard screenshots using AI and exports the data to CSV files and Google Sheets. It features advanced duplicate detection and player aggregation across multiple games.
+
+## 🎯 What This Tool Does
+- **AI-Powered Extraction**: Uses Google Gemini AI to read scorecard screenshots
+- **Smart Duplicate Detection**: Automatically identifies and merges duplicate players across games
+- **Data Aggregation**: Combines stats from multiple matches per player
+- **Export Options**: Save to CSV files or directly export to Google Sheets
+- **Web Interface**: Easy-to-use Streamlit web app
+
+## 📦 What's Included
 - `app_new.py` - Main web application (use this one)
 - `fortnite_processor.py` - Core processing engine
 - `requirements.txt` - Python dependencies
