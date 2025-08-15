@@ -32,6 +32,17 @@ class FortniteScoreboardProcessor:
         # Setup Google Sheets if credentials available
         self.sheets_client = self._setup_google_sheets()
         
+        # Store service account email for diagnostics
+        self.service_account_email = None
+        if self.sheets_client and self.sheets_credentials_file and os.path.exists(self.sheets_credentials_file):
+            try:
+                import json
+                with open(self.sheets_credentials_file, 'r') as f:
+                    creds_data = json.load(f)
+                    self.service_account_email = creds_data.get('client_email')
+            except Exception:
+                pass
+        
         # Duplicate detection
         self.enable_duplicate_check = os.getenv('ENABLE_DUPLICATE_CHECK', 'true').lower() == 'true'
         self.processed_hashes = set()
@@ -310,14 +321,43 @@ OTHER RULES:
     
     def export_to_google_sheets(self, results: List[Dict]) -> bool:
         """Export aggregated results to Google Sheets with COMBINE mode - merges with existing data."""
-        if not self.sheets_client or not self.sheet_id:
-            print("❌ Google Sheets not configured")
+        if not self.sheets_client:
+            print("❌ Google Sheets client not configured - check credentials.json")
+            return False
+        
+        if not self.sheet_id or self.sheet_id == 'your_google_sheet_id_here':
+            print("❌ Google Sheet ID not set in .env file")
+            print("💡 Get your Sheet ID from the URL: https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit")
             return False
         
         try:
+            print(f"🔍 Attempting to open Google Sheet: {self.sheet_id}")
             # Open the worksheet
             sheet = self.sheets_client.open_by_key(self.sheet_id)
+            print(f"✅ Sheet opened successfully: {sheet.title}")
+            
+            print(f"🔍 Looking for worksheet: {self.worksheet_name}")
             worksheet = sheet.worksheet(self.worksheet_name)
+            print(f"✅ Worksheet found: {self.worksheet_name}")
+            
+        except Exception as sheet_error:
+            print(f"❌ Error accessing Google Sheet: {sheet_error}")
+            if "404" in str(sheet_error):
+                print("💡 404 Error - This usually means:")
+                print("   1. Wrong Google Sheet ID in .env file")
+                print("   2. Sheet not shared with service account email")
+                if self.service_account_email:
+                    print(f"   📧 Your service account: {self.service_account_email}")
+                    print("   👆 Make sure to share your Google Sheet with this email!")
+            elif "403" in str(sheet_error):
+                print("💡 403 Error - Permission denied:")
+                print("   1. Share your Google Sheet with the service account")
+                print("   2. Give 'Editor' permissions")
+                if self.service_account_email:
+                    print(f"   📧 Service account: {self.service_account_email}")
+            return False
+        
+        try:
             
             def normalize_username(username: str) -> str:
                 """Lightweight backup normalization - AI should handle most cases."""
@@ -497,13 +537,19 @@ OTHER RULES:
             # Sort by K/D ratio and add combined data
             rows_to_add.sort(key=lambda x: x[13], reverse=True)  # Sort by kd_ratio (index 13)
             
-            # Add rows in batches for better performance
+            # Add rows efficiently using batch operations to avoid rate limits
+            import time
             batch_size = 100
+            
             for i in range(0, len(rows_to_add), batch_size):
                 batch = rows_to_add[i:i+batch_size]
-                for row in batch:
-                    worksheet.append_row(row)
+                # Use append_rows (plural) for efficient batch operation - single API call
+                worksheet.append_rows(batch, value_input_option='USER_ENTERED')
                 print(f"📊 Added batch {i//batch_size + 1}/{(len(rows_to_add)-1)//batch_size + 1}")
+                
+                # Add small delay between batches for rate limit safety
+                if i + batch_size < len(rows_to_add):  # Don't delay after last batch
+                    time.sleep(1)
             
             print(f"✅ Successfully updated leaderboard with {len(rows_to_add)} players")
             print(f"📈 COMBINE mode: Existing players updated, new players added!")
@@ -556,6 +602,66 @@ OTHER RULES:
             stats['kd_ratio'] = round(stats['total_eliminations'] / max(stats['total_deaths'], 1), 2)
         
         return player_stats
+
+    def diagnose_google_sheets_setup(self) -> bool:
+        """Diagnostic function to check Google Sheets configuration."""
+        print("🔍 Google Sheets Setup Diagnostic")
+        print("=" * 40)
+        
+        # Check credentials file
+        if not self.sheets_credentials_file:
+            print("❌ GOOGLE_SHEETS_CREDENTIALS_FILE not set in .env")
+            return False
+        
+        if not os.path.exists(self.sheets_credentials_file):
+            print(f"❌ Credentials file not found: {self.sheets_credentials_file}")
+            return False
+        
+        print(f"✅ Credentials file found: {self.sheets_credentials_file}")
+        
+        # Check service account email
+        if self.service_account_email:
+            print(f"✅ Service account email: {self.service_account_email}")
+            print("👆 Make sure your Google Sheet is shared with this email!")
+        else:
+            print("❌ Could not read service account email from credentials")
+        
+        # Check sheet ID
+        if not self.sheet_id or self.sheet_id == 'your_google_sheet_id_here':
+            print("❌ GOOGLE_SHEET_ID not properly set in .env")
+            print("💡 Extract it from your sheet URL:")
+            print("   https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit")
+            return False
+        
+        print(f"✅ Sheet ID configured: {self.sheet_id}")
+        
+        # Check Google Sheets client
+        if not self.sheets_client:
+            print("❌ Google Sheets client failed to initialize")
+            return False
+        
+        print("✅ Google Sheets client initialized")
+        
+        # Try to access the sheet
+        try:
+            print(f"🔄 Testing access to sheet...")
+            sheet = self.sheets_client.open_by_key(self.sheet_id)
+            print(f"✅ Successfully accessed sheet: {sheet.title}")
+            
+            # Try to access the worksheet
+            worksheet = sheet.worksheet(self.worksheet_name)
+            print(f"✅ Successfully accessed worksheet: {self.worksheet_name}")
+            
+            print("🎉 Google Sheets setup is working correctly!")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error accessing sheet: {e}")
+            if "404" in str(e):
+                print("💡 404 means either wrong Sheet ID or not shared with service account")
+            elif "403" in str(e):
+                print("💡 403 means no permission - share sheet with service account email")
+            return False
 
 # Example usage
 if __name__ == "__main__":

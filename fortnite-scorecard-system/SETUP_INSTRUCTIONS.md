@@ -26,23 +26,6 @@ This tool can be used in multiple ways:
 
 For website deployment, see `DEPLOYMENT.md` for detailed instructions.ic Scorecard Processor - Setup Instructions
 
-##  Overview
-This tool automatically extracts player statistics from Fortnite Ballistic scorecard screenshots using AI and exports the data to CSV files and Google Sheets. It features advanced duplicate detection and player aggregation across multiple games.
-
-## What This Tool Does
-- **AI-Powered Extraction**: Uses Google Gemini AI to read scorecard screenshots
-- **Smart Duplicate Detection**: Automatically identifies and merges duplicate players across games
-- **Data Aggregation**: Combines stats from multiple matches per player
-- **Export Options**: Save to CSV files or directly export to Google Sheets
-- **Web Interface**: Easy-to-use Streamlit web app
-
-## What's Included
-- `app_new.py` - Main web application (use this one)
-- `fortnite_processor.py` - Core processing engine
-- `requirements.txt` - Python dependencies
-- `credentials.json.example` - Google Sheets setup template
-- This setup guide
-
 ##  Quick Start (Recommended)
 
 ### Step 1: Install Python
@@ -90,9 +73,9 @@ The app will open in your web browser at `http://localhost:8501`
 4. Copy the API key
 5. Add it to your `.env` file as `GEMINI_API_KEY=your_key_here`
 
-**Cost**: ~$0.01-0.05 per image (very affordable)
+**Cost**: ~$0.01-0.05 per image 
 
-### Google Sheets (Optional - for direct export)
+### Google Sheets (for direct export)
 1. Go to [Google Cloud Console](https://console.cloud.google.com)
 2. Create a new project or select existing one
 3. Enable Google Sheets API
