@@ -13,13 +13,42 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+# Try to import streamlit for cloud deployment
+try:
+    import streamlit as st
+    IS_STREAMLIT = True
+except ImportError:
+    IS_STREAMLIT = False
+
 class FortniteScoreboardProcessor:
     def __init__(self):
         """Initialize the processor with API keys and configuration."""
-        self.gemini_api_key = os.getenv('GEMINI_API_KEY')
-        self.sheets_credentials_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE')
-        self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
-        self.worksheet_name = os.getenv('WORKSHEET_NAME', 'Leaderboard')
+        # Get configuration from Streamlit secrets (cloud) or environment variables (local)
+        if IS_STREAMLIT:
+            try:
+                # Try to get from Streamlit secrets first (for cloud deployment)
+                self.gemini_api_key = st.secrets.get('GEMINI_API_KEY')
+                self.sheet_id = st.secrets.get('GOOGLE_SHEET_ID')
+                self.worksheet_name = st.secrets.get('WORKSHEET_NAME', 'Sheet1')
+                self.sheets_credentials_data = st.secrets.get('google_credentials', {})
+                self.sheets_credentials_file = None  # Will use data instead
+                print("📊 Using Streamlit secrets configuration")
+            except Exception:
+                # Fallback to environment variables if Streamlit secrets fail
+                print("⚠️ Streamlit secrets not found, using environment variables")
+                self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+                self.sheets_credentials_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE')
+                self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
+                self.worksheet_name = os.getenv('WORKSHEET_NAME', 'Leaderboard')
+                self.sheets_credentials_data = None
+        else:
+            # Local development (non-Streamlit)
+            self.gemini_api_key = os.getenv('GEMINI_API_KEY')
+            self.sheets_credentials_file = os.getenv('GOOGLE_SHEETS_CREDENTIALS_FILE')
+            self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
+            self.worksheet_name = os.getenv('WORKSHEET_NAME', 'Leaderboard')
+            self.sheets_credentials_data = None
+            print("🔧 Using environment variables configuration")
         
         # Configure Gemini
         if self.gemini_api_key:
@@ -34,27 +63,36 @@ class FortniteScoreboardProcessor:
         
         # Store service account email for diagnostics
         self.service_account_email = None
-        if self.sheets_client and self.sheets_credentials_file and os.path.exists(self.sheets_credentials_file):
-            try:
-                import json
-                with open(self.sheets_credentials_file, 'r') as f:
-                    creds_data = json.load(f)
-                    self.service_account_email = creds_data.get('client_email')
-            except Exception:
-                pass
+        if self.sheets_client:
+            if self.sheets_credentials_data:
+                # Streamlit Cloud - get email from secrets
+                self.service_account_email = self.sheets_credentials_data.get('client_email')
+            elif self.sheets_credentials_file and os.path.exists(self.sheets_credentials_file):
+                # Local - get email from file
+                try:
+                    import json
+                    with open(self.sheets_credentials_file, 'r') as f:
+                        creds_data = json.load(f)
+                        self.service_account_email = creds_data.get('client_email')
+                except Exception:
+                    pass
         
         # Duplicate detection
-        self.enable_duplicate_check = os.getenv('ENABLE_DUPLICATE_CHECK', 'true').lower() == 'true'
+        if IS_STREAMLIT:
+            try:
+                duplicate_check = st.secrets.get('ENABLE_DUPLICATE_CHECK', 'true')
+            except Exception:
+                duplicate_check = os.getenv('ENABLE_DUPLICATE_CHECK', 'true')
+        else:
+            duplicate_check = os.getenv('ENABLE_DUPLICATE_CHECK', 'true')
+        
+        self.enable_duplicate_check = duplicate_check.lower() == 'true'
         self.processed_hashes = set()
         
         # Duplicate detection is now enabled for production use
     
     def _setup_google_sheets(self) -> Optional[gspread.Client]:
         """Setup Google Sheets client if credentials are available."""
-        if not self.sheets_credentials_file or not os.path.exists(self.sheets_credentials_file):
-            print("⚠️ Google Sheets credentials not found. Export will be CSV only.")
-            return None
-        
         try:
             # Define the scope
             scope = [
@@ -62,13 +100,24 @@ class FortniteScoreboardProcessor:
                 'https://www.googleapis.com/auth/drive'
             ]
             
-            # Load credentials
-            credentials = Credentials.from_service_account_file(
-                self.sheets_credentials_file, 
-                scopes=scope
-            )
-            
-            return gspread.authorize(credentials)
+            if self.sheets_credentials_data:
+                # Streamlit Cloud - use credentials from secrets
+                credentials = Credentials.from_service_account_info(
+                    self.sheets_credentials_data, 
+                    scopes=scope
+                )
+                return gspread.authorize(credentials)
+            elif self.sheets_credentials_file and os.path.exists(self.sheets_credentials_file):
+                # Local development - use credentials from file
+                credentials = Credentials.from_service_account_file(
+                    self.sheets_credentials_file, 
+                    scopes=scope
+                )
+                return gspread.authorize(credentials)
+            else:
+                print("⚠️ Google Sheets credentials not found. Export will be CSV only.")
+                return None
+                
         except Exception as e:
             print(f"⚠️ Failed to setup Google Sheets: {e}")
             return None
@@ -78,27 +127,38 @@ class FortniteScoreboardProcessor:
         with open(image_path, 'rb') as f:
             return hashlib.md5(f.read()).hexdigest()
     
-    def _create_extraction_prompt(self) -> str:
-        """Create the system prompt for Gemini to extract scorecard data."""
-        return """
-You are an expert at extracting data from Fortnite Ballistic game scorecards. 
+    def _create_extraction_prompt(self, existing_players: List[str] = None) -> str:
+        """Create the system prompt for Gemini to extract scorecard data with existing player context."""
+        
+        # Build existing players context
+        player_context = ""
+        if existing_players and len(existing_players) > 0:
+            # Limit to top 200 most active players to keep prompt manageable
+            top_players = existing_players[:200]
+            player_context = f"""
+🎯 KNOWN PLAYERS CONTEXT (be consistent with these):
+{', '.join(top_players)}
 
-Analyze this scorecard image and extract the player statistics in JSON format.
+When you see usernames that look similar to these known players, use the EXACT same spelling.
+Examples:
+- If you see "2AMDIBBS" and "dibbs" is in known players → use "dibbs"
+- If you see "NVFJJ7" and "jj" is in known players → use "jj"  
+- If you see "DOBy" and "dob" is in known players → use "dob"
+- If you see "ZQUINTIN" and "quintin" is in known players → use "quintin"
 
-Look for:
-- Player usernames/names
-- Eliminations (kills)
-- Deaths
-- Assists  
-- Damage dealt
-- Plants (bomb plants)
-- Defuses (bomb defuses)
+PRIORITIZE CONSISTENCY with known players over exact visual spelling.
+"""
+        
+        return f"""
+You are an expert at extracting data from Fortnite Ballistic game scorecards.
 
-Return ONLY a JSON object with this exact structure:
-{
+CRITICAL MISSION: Extract player usernames with PERFECT CONSISTENCY across all images.
+{player_context}
+Return ONLY this JSON structure:
+{{
     "players": [
-        {
-            "username": "player_name",
+        {{
+            "username": "CONSISTENT_NAME",
             "eliminations": 0,
             "deaths": 0, 
             "assists": 0,
@@ -106,35 +166,47 @@ Return ONLY a JSON object with this exact structure:
             "plants": 0,
             "defuses": 0,
             "team": "ATK" or "DEF"
-        }
+        }}
     ],
-    "match_info": {
+    "match_info": {{
         "match_result": "VICTORY" or "DEFEAT",
         "rounds_won": 0,
         "rounds_lost": 0,
         "timestamp": "auto_generated"
-    }
-}
+    }}
+}}
 
-CRITICAL USERNAME RULES:
-- Clean up usernames by removing common gaming prefixes/suffixes
-- Remove streaming prefixes: TTV, TWITCH, YT, YOUTUBE, STREAM (at start or end)
-- Remove clan/team tags: DVS, KTK, GVG, ZMR, FAZE, TSM, NRG, OG (at start)
-- Remove special characters, numbers, and symbols: *, ², _, -, spaces, etc.
-- Keep only the core alphabetic username
-- Examples: "TTV HEARTMADDI" → "HEARTMADDI", "*QUINTIN" → "QUINTIN", "dvs SCOPE" → "SCOPE"
-- If username becomes empty after cleaning, use original
+🚨 USERNAME CONSISTENCY PROTOCOL 🚨
 
-OTHER RULES:
-- Extract ALL players from the scoreboard
-- Convert all stats to integers
-- If a stat is not visible, use 0
-- Team should be "ATK" or "DEF" based on the scoreboard
-- Be very accurate with numbers
+STEP 1: Look at the username in the image
+STEP 2: Check if it matches or looks similar to any KNOWN PLAYERS above
+STEP 3: If similar match found → use the KNOWN PLAYER name exactly
+STEP 4: If no match → extract cleanly (remove tiny clan tags only)
+
+ABSOLUTE RULES:
+✅ BE CONSISTENT with known players (most important!)
+✅ Remove only tiny micro-text clan tags (TTV, dvs, etc.)
+✅ Keep all normal-sized letters and numbers
+✅ When in doubt, preserve more rather than less
+
+❌ NEVER create new variations of known players
+❌ NEVER add decorations to existing names
+❌ NEVER change spelling of known players
+
+CONSISTENCY EXAMPLES:
+- Image shows "2AM DIBBS" + "dibbs" is known → return "dibbs"
+- Image shows "NVFJJ" + "jj" is known → return "jj"
+- Image shows "DOBy" + "dob" is known → return "dob"
+- Image shows "SKELETO" + "skeleto" is known → return "skeleto"
+
+YOUR JOB: Maximize consistency with existing leaderboard data.
+RESULT: Same players always get same usernames across all screenshots.
+
+Extract ALL players. Convert stats to integers. Use 0 if not visible.
 """
 
-    def process_image(self, image_path: str) -> Optional[Dict]:
-        """Process a single image and extract scorecard data."""
+    def process_image(self, image_path: str, existing_players: List[str] = None) -> Optional[Dict]:
+        """Process a single image and extract scorecard data with existing player context."""
         if not self.model:
             print("❌ Gemini model not available")
             return None
@@ -151,11 +223,13 @@ OTHER RULES:
             # Load and process image
             image = Image.open(image_path)
             
-            # Create prompt
-            prompt = self._create_extraction_prompt()
+            # Create prompt with existing players context
+            prompt = self._create_extraction_prompt(existing_players)
             
             # Generate response
             print(f"🔄 Processing {os.path.basename(image_path)}...")
+            if existing_players:
+                print(f"📋 Using context of {len(existing_players)} known players for consistency")
             response = self.model.generate_content([prompt, image])
             
             # Parse JSON response
@@ -178,16 +252,70 @@ OTHER RULES:
             print(f"❌ Error processing {image_path}: {e}")
             return None
     
-    def process_batch(self, image_paths: List[str]) -> List[Dict]:
-        """Process multiple images and return combined results."""
+    def _get_existing_players(self) -> List[str]:
+        """Get existing players from Google Sheets for AI context."""
+        if not self.sheets_client or not self.sheet_id:
+            return []
+        
+        try:
+            sheet = self.sheets_client.open_by_key(self.sheet_id)
+            worksheet = sheet.worksheet(self.worksheet_name)
+            
+            # Get all records and extract usernames
+            all_records = worksheet.get_all_records()
+            players = []
+            
+            for record in all_records:
+                username = record.get('username', '').strip()
+                if username and username.lower() not in ['username', 'player']:
+                    players.append(username)
+            
+            # Sort by games played (descending) to prioritize active players
+            try:
+                players_with_games = []
+                for record in all_records:
+                    username = record.get('username', '').strip()
+                    games = int(record.get('games_played', 0))
+                    if username and username.lower() not in ['username', 'player']:
+                        players_with_games.append((username, games))
+                
+                # Sort by games played, then alphabetically
+                players_with_games.sort(key=lambda x: (-x[1], x[0]))
+                players = [p[0] for p in players_with_games]
+            except:
+                # Fallback to alphabetical sort if games_played parsing fails
+                players.sort()
+            
+            print(f"📊 Found {len(players)} existing players for AI context")
+            return players[:100]  # Limit to top 100 to keep prompt manageable
+            
+        except Exception as e:
+            print(f"⚠️ Could not load existing players: {e}")
+            return []
+    
+    def process_images_with_context(self, image_paths: List[str]) -> List[Dict]:
+        """Process images with existing player context for maximum consistency."""
+        # Get existing players for AI context
+        existing_players = self._get_existing_players()
+        
+        if existing_players:
+            print(f"🎯 AI will use {len(existing_players)} known players for consistency")
+            print(f"📋 Top known players: {', '.join(existing_players[:10])}...")
+        else:
+            print("🆕 No existing players found - processing as new leaderboard")
+        
         all_results = []
         
         for image_path in image_paths:
-            result = self.process_image(image_path)
+            result = self.process_image(image_path, existing_players)
             if result:
                 all_results.append(result)
         
         return all_results
+    
+    def process_batch(self, image_paths: List[str]) -> List[Dict]:
+        """Process multiple images (legacy method - now uses context for consistency)."""
+        return self.process_images_with_context(image_paths)
     
     def export_to_csv(self, results: List[Dict], output_file: str = None) -> str:
         """Export aggregated results to CSV with improved duplicate detection."""
@@ -200,29 +328,135 @@ OTHER RULES:
             output_file = f"fortnite_stats_{timestamp}.csv"
         
         def normalize_username(username: str) -> str:
-            """Robust username normalization for duplicate detection - algorithmic approach."""
+            """Balanced normalization - handles client patterns while preserving legitimate names."""
             import re
+            
+            if not username or not username.strip():
+                return ""
             
             original = username.strip()
             
-            # Simple cleanup as backup (AI should already handle this)
+            # Handle anonymous/placeholder names
+            if any(word in original.lower() for word in ['anonymous', 'player', 'newplayer']):
+                return 'player'
+            
+            # Convert to lowercase and remove all special characters, keep only letters
             normalized = re.sub(r'[^a-zA-Z]', '', original).lower()
             
-            # Handle common OCR errors and typos
-            # Remove repeated letters that might be OCR errors (e.g., SKITTLE -> SKITLE)
-            normalized = re.sub(r'(.)\1+', r'\1', normalized)
+            # SPECIFIC FIXES for client's known problem patterns (hardcoded for accuracy)
+            specific_fixes = {
+                'amdibbs': 'dibbs',      # 2AMDIBBS → dibbs
+                'nvfjj': 'jj',           # NVFJJ7 → jj 
+                'doby': 'dob',           # DOBy → dob
+                'zquintin': 'quintin',   # ZQUINTIN → quintin
+                'quintin': 'quintin',    # QUINTIN → quintin (fix removal of Q)
+                'skittle': 'skitle',     # SKITTLE6 → skitle
+                'skeletos': 'skeleto',   # SKELETOS → skeleto
+                'amdarkcel': 'darkcely', # 2AM DARKCELY → darkcely
+                'amdarkcely': 'darkcely', # 2AM DARKCELY → darkcely
+                'darkcel': 'darkcely',   # DARKCELY → darkcely
+                'darkcely': 'darkcely',  # DARKCELY → darkcely (preserve full)
+                'scamo': 'camo',         # SCAMO → camo
+                'legendx': 'legend',     # XLEGENDX → legend
+                'herox': 'hero',         # HEROX → hero
+            }
             
-            # Handle common OCR substitutions
-            normalized = normalized.replace('0', 'o').replace('1', 'i').replace('5', 's')
+            # Check specific fixes first
+            if normalized in specific_fixes:
+                return specific_fixes[normalized]
             
-            # Handle anonymous/placeholder names separately
-            if 'anonymous' in original.lower() or 'player' in original.lower():
-                return original.lower()
+            # Handle OCR errors
+            ocr_replacements = {'0': 'o', '1': 'i', '5': 's', '3': 'e', '7': 't', '8': 'b', '6': 'g'}
+            for digit, letter in ocr_replacements.items():
+                normalized = normalized.replace(digit, letter)
             
-            # Fallback if normalization fails
-            if not normalized.strip():
-                return original.lower()
-                
+            # Remove repeated letters (OCR errors) - only 4+ repetitions
+            normalized = re.sub(r'(.)\1{3,}', r'\1', normalized)
+            
+            # CONSERVATIVE prefix removal - only obvious gaming tags
+            gaming_prefixes = [
+                'ttv', 'twitch', 'yt', 'youtube', 'stream', 'live', 'tv',
+                'dvs', 'ktk', 'gvg', 'zmr', 'faze', 'tsm', 'nrg', 'og', 'clan',
+                'reign', 'team', 'guild', 'squad', 'crew', 'pro', 'esports'
+            ]
+            
+            # Only remove if result is meaningful (4+ chars)
+            for prefix in gaming_prefixes:
+                if normalized.startswith(prefix) and len(normalized) > len(prefix):
+                    potential = normalized[len(prefix):]
+                    if len(potential) >= 4:
+                        normalized = potential
+                        break
+            
+            # CONSERVATIVE suffix removal
+            gaming_suffixes = [
+                'ttv', 'twitch', 'yt', 'youtube', 'stream', 'tv', 'live',
+                'pro', 'gaming', 'game', 'player', 'god', 'king', 'queen',
+                'win', 'wins', 'best', 'top', 'og', 'official'
+            ]
+            
+            for suffix in gaming_suffixes:
+                if normalized.endswith(suffix) and len(normalized) > len(suffix):
+                    potential = normalized[:-len(suffix)]
+                    if len(potential) >= 4:
+                        normalized = potential
+                        break
+            
+            # Handle xX wrapper patterns
+            if len(normalized) > 6 and normalized.startswith('xx') and normalized.endswith('xx'):
+                potential = normalized[2:-2]
+                if len(potential) >= 3:
+                    normalized = potential
+            
+            # TARGETED pattern fixes for number+letter combos (2AM, 3KT, etc.)
+            if len(normalized) > 6:
+                # Handle "2AM..." "3AM..." "4KT..." patterns
+                if re.match(r'^[0-9]am', normalized):
+                    potential = normalized[3:]  # Remove "2am"
+                    if len(potential) >= 4:
+                        normalized = potential
+                elif re.match(r'^[0-9]kt', normalized):
+                    potential = normalized[3:]  # Remove "4kt"
+                    if len(potential) >= 4:
+                        normalized = potential
+            
+            # TARGETED short prefix removal (NVF, GVG, ZMR) - only if followed by 4+ chars
+            if len(normalized) > 6:
+                short_prefixes = ['nvf', 'gvg', 'zmr']
+                for prefix in short_prefixes:
+                    if normalized.startswith(prefix):
+                        potential = normalized[len(prefix):]
+                        if len(potential) >= 4:
+                            normalized = potential
+                            break
+            
+            # CAREFUL single letter prefix removal - only for obvious cases
+            if len(normalized) > 5:
+                # Only remove single letters if result looks like a real name
+                single_letters = ['z', 'x', 'q', 'b', 'c', 's']
+                for letter in single_letters:
+                    if normalized.startswith(letter):
+                        potential = normalized[1:]
+                        # Only if result starts with vowel or common consonant
+                        if len(potential) >= 4 and potential[0] in 'aeioudhmnprstl':
+                            normalized = potential
+                            break
+            
+            # Handle trailing Y and Z - common suffixes
+            if len(normalized) > 4:
+                if normalized.endswith('y') or normalized.endswith('z'):
+                    potential = normalized[:-1]
+                    if len(potential) >= 3:
+                        normalized = potential
+            
+            # Final safety check
+            if len(normalized) < 2:
+                cleaned = re.sub(r'[^a-zA-Z]', '', original).lower()
+                if len(cleaned) >= 2:
+                    normalized = cleaned
+                else:
+                    normalized = original.lower()
+            
             return normalized.strip()
         
         # Aggregate data by player (normalize usernames for better matching)
@@ -358,24 +592,137 @@ OTHER RULES:
             return False
         
         try:
-            
+            # Normalize usernames function for duplicate detection
             def normalize_username(username: str) -> str:
-                """Lightweight backup normalization - AI should handle most cases."""
+                """Balanced normalization - handles client patterns while preserving legitimate names."""
                 import re
+                
+                if not username or not username.strip():
+                    return ""
                 
                 original = username.strip()
                 
-                # Simple cleanup as backup (AI should already handle this)
+                # Handle anonymous/placeholder names
+                if any(word in original.lower() for word in ['anonymous', 'player', 'newplayer']):
+                    return 'player'
+                
+                # Convert to lowercase and remove all special characters, keep only letters
                 normalized = re.sub(r'[^a-zA-Z]', '', original).lower()
                 
-                # Handle anonymous/placeholder names separately
-                if 'anonymous' in original.lower() or 'player' in original.lower():
-                    return original.lower()
+                # SPECIFIC FIXES for client's known problem patterns (hardcoded for accuracy)
+                specific_fixes = {
+                    'amdibbs': 'dibbs',      # 2AMDIBBS → dibbs
+                    'nvfjj': 'jj',           # NVFJJ7 → jj 
+                    'doby': 'dob',           # DOBy → dob
+                    'zquintin': 'quintin',   # ZQUINTIN → quintin
+                    'quintin': 'quintin',    # QUINTIN → quintin (fix removal of Q)
+                    'skittle': 'skitle',     # SKITTLE6 → skitle
+                    'skeletos': 'skeleto',   # SKELETOS → skeleto
+                    'amdarkcel': 'darkcely', # 2AM DARKCELY → darkcely
+                    'amdarkcely': 'darkcely', # 2AM DARKCELY → darkcely
+                    'darkcel': 'darkcely',   # DARKCELY → darkcely
+                    'darkcely': 'darkcely',  # DARKCELY → darkcely (preserve full)
+                    'scamo': 'camo',         # SCAMO → camo
+                    'legendx': 'legend',     # XLEGENDX → legend
+                    'herox': 'hero',         # HEROX → hero
+                }
                 
-                # Fallback if normalization fails
-                if not normalized.strip():
-                    return original.lower()
-                    
+                # Check specific fixes first
+                if normalized in specific_fixes:
+                    return specific_fixes[normalized]
+                
+                # Handle OCR errors
+                ocr_replacements = {'0': 'o', '1': 'i', '5': 's', '3': 'e', '7': 't', '8': 'b', '6': 'g'}
+                for digit, letter in ocr_replacements.items():
+                    normalized = normalized.replace(digit, letter)
+                
+                # Remove repeated letters (OCR errors) - only 4+ repetitions
+                normalized = re.sub(r'(.)\1{3,}', r'\1', normalized)
+                
+                # CONSERVATIVE prefix removal - only obvious gaming tags
+                gaming_prefixes = [
+                    'ttv', 'twitch', 'yt', 'youtube', 'stream', 'live', 'tv',
+                    'dvs', 'ktk', 'gvg', 'zmr', 'faze', 'tsm', 'nrg', 'og', 'clan',
+                    'reign', 'team', 'guild', 'squad', 'crew', 'pro', 'esports'
+                ]
+                
+                # Only remove if result is meaningful (4+ chars)
+                for prefix in gaming_prefixes:
+                    if normalized.startswith(prefix) and len(normalized) > len(prefix):
+                        potential = normalized[len(prefix):]
+                        if len(potential) >= 4:
+                            normalized = potential
+                            break
+                
+                # CONSERVATIVE suffix removal
+                gaming_suffixes = [
+                    'ttv', 'twitch', 'yt', 'youtube', 'stream', 'tv', 'live',
+                    'pro', 'gaming', 'game', 'player', 'god', 'king', 'queen',
+                    'win', 'wins', 'best', 'top', 'og', 'official'
+                ]
+                
+                for suffix in gaming_suffixes:
+                    if normalized.endswith(suffix) and len(normalized) > len(suffix):
+                        potential = normalized[:-len(suffix)]
+                        if len(potential) >= 4:
+                            normalized = potential
+                            break
+                
+                # Handle xX wrapper patterns
+                if len(normalized) > 6 and normalized.startswith('xx') and normalized.endswith('xx'):
+                    potential = normalized[2:-2]
+                    if len(potential) >= 3:
+                        normalized = potential
+                
+                # TARGETED pattern fixes for number+letter combos (2AM, 3KT, etc.)
+                if len(normalized) > 6:
+                    # Handle "2AM..." "3AM..." "4KT..." patterns
+                    if re.match(r'^[0-9]am', normalized):
+                        potential = normalized[3:]  # Remove "2am"
+                        if len(potential) >= 4:
+                            normalized = potential
+                    elif re.match(r'^[0-9]kt', normalized):
+                        potential = normalized[3:]  # Remove "4kt"
+                        if len(potential) >= 4:
+                            normalized = potential
+                
+                # TARGETED short prefix removal (NVF, GVG, ZMR) - only if followed by 4+ chars
+                if len(normalized) > 6:
+                    short_prefixes = ['nvf', 'gvg', 'zmr']
+                    for prefix in short_prefixes:
+                        if normalized.startswith(prefix):
+                            potential = normalized[len(prefix):]
+                            if len(potential) >= 4:
+                                normalized = potential
+                                break
+                
+                # CAREFUL single letter prefix removal - only for obvious cases
+                if len(normalized) > 5:
+                    # Only remove single letters if result looks like a real name
+                    single_letters = ['z', 'x', 'q', 'b', 'c', 's']
+                    for letter in single_letters:
+                        if normalized.startswith(letter):
+                            potential = normalized[1:]
+                            # Only if result starts with vowel or common consonant
+                            if len(potential) >= 4 and potential[0] in 'aeioudhmnprstl':
+                                normalized = potential
+                                break
+                
+                # Handle trailing Y and Z - common suffixes
+                if len(normalized) > 4:
+                    if normalized.endswith('y') or normalized.endswith('z'):
+                        potential = normalized[:-1]
+                        if len(potential) >= 3:
+                            normalized = potential
+                
+                # Final safety check
+                if len(normalized) < 2:
+                    cleaned = re.sub(r'[^a-zA-Z]', '', original).lower()
+                    if len(cleaned) >= 2:
+                        normalized = cleaned
+                    else:
+                        normalized = original.lower()
+                
                 return normalized.strip()
             
             # STEP 1: Read existing data from Google Sheet
@@ -608,16 +955,17 @@ OTHER RULES:
         print("🔍 Google Sheets Setup Diagnostic")
         print("=" * 40)
         
-        # Check credentials file
-        if not self.sheets_credentials_file:
-            print("❌ GOOGLE_SHEETS_CREDENTIALS_FILE not set in .env")
+        # Check credentials
+        if self.sheets_credentials_data:
+            print("✅ Using Streamlit Cloud secrets for credentials")
+        elif self.sheets_credentials_file:
+            if not os.path.exists(self.sheets_credentials_file):
+                print(f"❌ Credentials file not found: {self.sheets_credentials_file}")
+                return False
+            print(f"✅ Credentials file found: {self.sheets_credentials_file}")
+        else:
+            print("❌ No credentials configured (neither secrets nor file)")
             return False
-        
-        if not os.path.exists(self.sheets_credentials_file):
-            print(f"❌ Credentials file not found: {self.sheets_credentials_file}")
-            return False
-        
-        print(f"✅ Credentials file found: {self.sheets_credentials_file}")
         
         # Check service account email
         if self.service_account_email:
@@ -673,10 +1021,11 @@ if __name__ == "__main__":
     
     if image_files:
         print(f"Found {len(image_files)} images to process...")
-        results = processor.process_batch(image_files)
+        print("🎯 Using AI-first consistency approach with existing player context")
+        results = processor.process_images_with_context(image_files)
         
         if results:
-            # Export to CSV
+            # Export to CSV  
             csv_file = processor.export_to_csv(results)
             
             # Export to Google Sheets (if configured)

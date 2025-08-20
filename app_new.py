@@ -159,14 +159,13 @@ def main():
             status_text.text("Processing with Gemini AI...")
             progress_bar.progress(0)
             
-            results = []
-            for i, temp_file in enumerate(temp_files):
+            # Use AI-first context-aware processing
+            results = processor.process_images_with_context(temp_files)
+            
+            # Update progress bar as we process
+            for i in range(len(temp_files)):
                 progress_bar.progress((i + 1) / len(temp_files))
                 status_text.text(f"Processing image {i+1} of {len(temp_files)}...")
-                
-                result = processor.process_image(temp_file)
-                if result:
-                    results.append(result)
             
             # Clean up temp files
             for temp_file in temp_files:

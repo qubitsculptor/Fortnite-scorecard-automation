@@ -43,8 +43,8 @@ def main():
     if args.no_duplicates:
         processor.enable_duplicate_check = False
     
-    # Process images
-    results = processor.process_batch(image_files)
+    # Process images with context (AI-first approach)
+    results = processor.process_images_with_context(image_files)
     
     if not results:
         print("❌ No data extracted from images")
